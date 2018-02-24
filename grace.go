@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -29,6 +30,9 @@ var (
 	defaultPulseInterval   = time.Second
 	defaultShutdownTimeout = 60 * time.Second
 )
+
+// wait all goroutine from http connection
+var wg sync.WaitGroup
 
 type Server struct {
 	opt      *option
@@ -60,6 +64,14 @@ func ListenAndServe(addr string, handler http.Handler, opt ...Option) error {
 	return server.ListenAndServe(addr, handler)
 }
 
+func Go(f func()) {
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		f()
+	}()
+}
+
 // Register regist a pair of addr and router.
 func (s *Server) Register(addr string, handler http.Handler) {
 	s.addrs = append(s.addrs, addr)
@@ -71,6 +83,7 @@ func (s *Server) Run() error {
 	if len(s.addrs) == 0 {
 		return errors.New("no servers")
 	}
+
 	if IsWorker() {
 		worker := &worker{handlers: s.handlers, opt: s.opt, shutdownCh: make(chan struct{})}
 		return worker.run()

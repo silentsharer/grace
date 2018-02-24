@@ -16,7 +16,13 @@ func main() {
 			t, _ := time.ParseDuration(d)
 			time.Sleep(t)
 		}
-		fmt.Fprintln(w, "hello world")
+
+		grace.Go(func() {
+			for i := 0; i < 5; i++ {
+				fmt.Println(r.URL.Query().Get("duration"))
+			}
+		})
+		fmt.Println("end")
 	})
 
 	log.Fatalln(grace.ListenAndServe(":8080", nil))

@@ -142,6 +142,8 @@ func (w *worker) shutdown() {
 			log.Printf("shutdown server error: %v\n", err)
 		}
 	}
+
+	wg.Wait()
 }
 
 func (w worker) killOldWorker() {
