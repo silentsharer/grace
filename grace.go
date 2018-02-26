@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -24,16 +23,14 @@ const (
 )
 
 // default option value
-var (
-	defaultRestartSignal   = []syscall.Signal{syscall.SIGUSR1}
-	defaultShutdownSignal  = []syscall.Signal{syscall.SIGTERM, syscall.SIGINT}
-	defaultPulseInterval   = time.Second
-	defaultShutdownTimeout = 60 * time.Second
-)
+var defaultOption = &option{
+	restartSignal:   []syscall.Signal{syscall.SIGUSR1},
+	shutdownSignal:  []syscall.Signal{syscall.SIGTERM, syscall.SIGINT},
+	pulseInterval:   time.Second,
+	shutdownTimeout: 60 * time.Second,
+}
 
-// wait all goroutine from http connection
-var wg sync.WaitGroup
-
+// http server
 type Server struct {
 	opt      *option
 	addrs    []string
@@ -41,12 +38,7 @@ type Server struct {
 }
 
 func NewServer(opt ...Option) *Server {
-	option := &option{
-		restartSignal:   defaultRestartSignal,
-		shutdownSignal:  defaultShutdownSignal,
-		pulseInterval:   defaultPulseInterval,
-		shutdownTimeout: defaultShutdownTimeout,
-	}
+	option := defaultOption
 
 	for _, opt := range opt {
 		opt(option)
@@ -59,23 +51,19 @@ func NewServer(opt ...Option) *Server {
 	}
 }
 
+// http listenAndServe
 func ListenAndServe(addr string, handler http.Handler, opt ...Option) error {
 	server := NewServer(opt...)
 	return server.ListenAndServe(addr, handler)
 }
 
+// grace goroutine, wait all goroutine return.
 func Go(f func()) {
 	go func() {
 		wg.Add(1)
 		defer wg.Done()
 		f()
 	}()
-}
-
-// Register regist a pair of addr and router.
-func (s *Server) Register(addr string, handler http.Handler) {
-	s.addrs = append(s.addrs, addr)
-	s.handlers = append(s.handlers, handler)
 }
 
 // Run run all register server
@@ -97,13 +85,10 @@ func (s *Server) Run() error {
 	return errors.New("unknown server")
 }
 
-func (s *Server) Restart() error {
-	ppid := os.Getppid()
-	if IsWorker() && ppid != 1 && len(s.opt.restartSignal) > 0 {
-		return syscall.Kill(ppid, s.opt.restartSignal[0])
-	}
-
-	return nil
+// Register regist a pair of addr and router.
+func (s *Server) Register(addr string, handler http.Handler) {
+	s.addrs = append(s.addrs, addr)
+	s.handlers = append(s.handlers, handler)
 }
 
 func (s *Server) ListenAndServe(addr string, handler http.Handler) error {

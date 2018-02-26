@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 )
 
 type master struct {
@@ -27,6 +28,7 @@ type master struct {
 	sync.Mutex
 }
 
+// run master
 func (m *master) run() error {
 	m.Lock()
 
@@ -36,8 +38,8 @@ func (m *master) run() error {
 		return err
 	}
 
-	// fork worker
-	wpid, err := m.fork()
+	// new worker
+	wpid, err := m.newWorker()
 	if err != nil {
 		return err
 	}
@@ -50,46 +52,20 @@ func (m *master) run() error {
 	return nil
 }
 
-func (m *master) waitSignal() {
-	ch := make(chan os.Signal)
-	var sig os.Signal
-	signal.Notify(ch, m.signal()...)
-
-	for {
-		select {
-		case <-m.workerExit:
-			atomic.AddInt32(&m.activeWorkerNum, -1)
-			if m.activeWorkerNum <= 0 {
-				log.Printf("all workers exit, master shutdown")
-				m.shutdown()
-				return
-			}
-			continue
-		case sig = <-ch:
-			log.Printf("master got signal: %v\n", sig)
-		}
-
-		if m.isRestartSignal(sig) {
-			m.restart()
-		}
-
-		if m.isShutdownSignal(sig) {
-			m.shutdown()
-			return
-		}
-	}
-}
-
 // restart graceful restart
 func (m *master) restart() {
 	m.Lock()
 	defer m.Unlock()
 
-	wpid, err := m.fork()
+	// new worker
+	wpid, err := m.newWorker()
 	if err != nil {
 		log.Printf("[restart] fork worker error: %v\n", err)
 		return
 	}
+
+	// kill old worker
+	m.killOldWorker()
 
 	m.workerPid = wpid
 }
@@ -97,6 +73,20 @@ func (m *master) restart() {
 // shutdown master, nothing to do.
 func (m *master) shutdown() {
 
+}
+
+// new worker
+func (m *master) newWorker() (int, error) {
+	return m.fork()
+}
+
+// kill old worker
+func (m *master) killOldWorker() {
+	// tell old worker I have a new worker, you should go away.
+	err := syscall.Kill(m.workerPid, WorkerStopSignal)
+	if err != nil {
+		log.Printf("[warning] kill old worker error: %v\n", err)
+	}
 }
 
 // initFds clone tcp listen fds, close fds from master.
@@ -151,6 +141,38 @@ func (m *master) fork() (int, error) {
 	return cmd.Process.Pid, nil
 }
 
+// waitSignal recieve restart or shutdown signal.
+func (m *master) waitSignal() {
+	var sig os.Signal
+	ch := make(chan os.Signal)
+	signal.Notify(ch, m.signal()...)
+
+	for {
+		select {
+		case <-m.workerExit:
+			atomic.AddInt32(&m.activeWorkerNum, -1)
+			if m.activeWorkerNum <= 0 {
+				log.Printf("all workers exit, master shutdown")
+				m.shutdown()
+				return
+			}
+			continue
+		case sig = <-ch:
+			log.Printf("master got signal: %v\n", sig)
+		}
+
+		if m.isRestartSignal(sig) {
+			m.restart()
+		}
+
+		if m.isShutdownSignal(sig) {
+			m.shutdown()
+			return
+		}
+	}
+}
+
+// fork worker process transfer env.
 func (m *master) environ() []string {
 	wokrer := fmt.Sprintf("%s=%s", EnvWorker, ValWorker)
 	fdnum := fmt.Sprintf("%s=%d", EnvFdNum, len(m.extraFiles))
@@ -159,6 +181,7 @@ func (m *master) environ() []string {
 	return []string{wokrer, fdnum, oldWorkerPid}
 }
 
+// signal list master all signal.
 func (m *master) signal() []os.Signal {
 	sigs := make([]os.Signal, 0, len(m.opt.restartSignal)+len(m.opt.shutdownSignal))
 
