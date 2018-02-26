@@ -65,14 +65,14 @@ func (m *master) restart() {
 	}
 
 	// kill old worker
-	m.killOldWorker()
+	m.killWorker()
 
 	m.workerPid = wpid
 }
 
-// shutdown master, nothing to do.
+// shutdown master, kill worker.
 func (m *master) shutdown() {
-
+	m.killWorker()
 }
 
 // new worker
@@ -80,8 +80,8 @@ func (m *master) newWorker() (int, error) {
 	return m.fork()
 }
 
-// kill old worker
-func (m *master) killOldWorker() {
+// kill worker
+func (m *master) killWorker() {
 	// tell old worker I have a new worker, you should go away.
 	err := syscall.Kill(m.workerPid, WorkerStopSignal)
 	if err != nil {
